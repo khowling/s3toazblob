@@ -2,3 +2,4 @@ node_modules
 node_modules/*
 ENV.sh
 log-*
+nohup.out
