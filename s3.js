@@ -86,7 +86,7 @@ let streamBlob = (s3blob, azblob, key) => {
     })
 }
 
-const skip = (process.env.SKIP_KEY != null)
+var skip = (process.env.SKIP_KEY != null)
 
 s3auth.listObjects({s3Params: {Bucket: process.env.BUCKET, Prefix: PREFIX}})
 .addListener('data', (d) => { 
