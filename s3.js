@@ -77,38 +77,6 @@ let sendToAppInsights = (key) => {
 }
 
 
-let streamBlob = (s3blob, azblob, key) => {
-    return new Promise((accept, reject) => {
-        processing++
-        s3auth.downloadStream(s3blob).pipe(new ChangeDelimiter()).pipe(azblob)
-
-        azblob.on('finish', () => { 
-          if (!(process.env.APPINSIGHTS_SOURCENAME && process.env.APPINSIGHTS_IKEY)) {
-            processing--; complete++
-            fs.write(logerr, `success,${key},AzBLob,\n`, () => {
-              accept(key) 
-            })
-          } else {
-            sendToAppInsights(key).then((succkey) => {
-              processing--; complete++
-              fs.write(logerr, `success,${key},AppInsights,\n`, () => {
-                accept(key) 
-              })
-            }, (err) => {
-              processing--; error++
-              fs.write(logerr, `error,${key},${err}\n`, () => {
-                  reject(`Error: key ${key} - ${err}`)
-              })
-            })
-          }
-        })
-        azblob.on('error', (e) => { 
-          processing--; error++; 
-          fs.write(logerr, `error,${key},Pipe,${e}\n`, () => { reject(e) })
-        })
-    })
-}
-
 const saslocator = createSASLocator(process.env.STORAGEACC, process.env.CONTAINER, 3000, process.env.KEY)
 
 if (mode == 'all') {
@@ -119,6 +87,39 @@ if (mode == 'all') {
 
   const s3auth = s3.createClient({s3Options: { accessKeyId: process.env.ACCESSKEYID, secretAccessKey: process.env.SECRETACCESSKEY}}),
         plimit = new PromiseRunner(10)
+
+  
+  let streamBlob = (s3blob, azblob, key) => {
+      return new Promise((accept, reject) => {
+          processing++
+          s3auth.downloadStream(s3blob).pipe(new ChangeDelimiter()).pipe(azblob)
+
+          azblob.on('finish', () => { 
+            if (!(process.env.APPINSIGHTS_SOURCENAME && process.env.APPINSIGHTS_IKEY)) {
+              processing--; complete++
+              fs.write(logerr, `success,${key},AzBLob,\n`, () => {
+                accept(key) 
+              })
+            } else {
+              sendToAppInsights(key).then((succkey) => {
+                processing--; complete++
+                fs.write(logerr, `success,${key},AppInsights,\n`, () => {
+                  accept(key) 
+                })
+              }, (err) => {
+                processing--; error++
+                fs.write(logerr, `error,${key},${err}\n`, () => {
+                    reject(`Error: key ${key} - ${err}`)
+                })
+              })
+            }
+          })
+          azblob.on('error', (e) => { 
+            processing--; error++; 
+            fs.write(logerr, `error,${key},Pipe,${e}\n`, () => { reject(e) })
+          })
+      })
+  }
 
   s3auth.listObjects({s3Params: {Bucket: process.env.BUCKET, Prefix: PREFIX}})
     .addListener('data', (d) => {
