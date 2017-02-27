@@ -14,7 +14,21 @@ if (!(process.env.ACCESSKEYID && process.env.SECRETACCESSKEY && process.env.BUCK
     process.exit (1)
 }
 
-var   PREFIX = process.argv[2] || process.env.PREFIX
+let args = process.argv.slice(2),
+    mode = 'all'
+
+if (args[0] && args[0].startsWith('-')) {
+  switch (args[0]) {
+    case '-i': 
+      mode = 'ionly'; break;
+    default: 
+      console.log (`unknown flag ${args[0]}`)
+      process.exit (1)
+  }
+  args.shift()
+}
+
+ PREFIX = args[0] || process.env.PREFIX
 if (!PREFIX) {
     console.log ('pass S3 Prefix on command line or set PREFIX env')
     process.exit (1)
@@ -22,58 +36,70 @@ if (!PREFIX) {
 
 let batches = 0, queued = 0, processing = 0, error = 0, complete = 0
 
+let sendToAppInsights = (key) => {
+  return new Promise((accept, reject) => {
+    let payload =  JSON.stringify({
+        "data": {
+          "baseType": "OpenSchemaData",
+          "baseData": {
+            "ver": "2",
+            "blobSasUri": `https://${saslocator.hostname}/${saslocator.container}/${encodeURIComponent(key)}?${saslocator.sas}`,
+            "sourceName": process.env.APPINSIGHTS_SOURCENAME,
+            "sourceVersion": "1.0"
+          }
+        },
+        "ver": 1,
+        "name": "Microsoft.ApplicationInsights.OpenSchema",
+        "time": new Date().toISOString(),
+        "iKey": process.env.APPINSIGHTS_IKEY
+
+      }),
+      putreq = https.request({
+        hostname: 'dc.services.visualstudio.com',
+        path: '/v2/track',
+        method: 'POST',
+        headers: {
+          "Content-Length": payload.length
+        }
+      }, (res) => {
+
+        if(res.statusCode == 200 || res.statusCode == 201) {
+            accept(key) 
+        } else {
+            reject(`AppInsights ReturnCode,${res.statusCode}`)
+        }
+      }).on('error', (e) => {
+        reject(`AppInsights Error,${e}`)
+      })
+    putreq.write (payload)
+    putreq.end()
+  })
+}
+
+
 let streamBlob = (s3blob, azblob, key) => {
     return new Promise((accept, reject) => {
         processing++
         s3auth.downloadStream(s3blob).pipe(new ChangeDelimiter()).pipe(azblob)
 
         azblob.on('finish', () => { 
-          if (true) {
+          if (!(process.env.APPINSIGHTS_SOURCENAME && process.env.APPINSIGHTS_IKEY)) {
             processing--; complete++
-            accept(key) 
+            fs.write(logerr, `success,${key},AzBLob,\n`, () => {
+              accept(key) 
+            })
           } else {
-            let payload =  JSON.stringify({
-                  "data": {
-                    "baseType": "OpenSchemaData",
-                    "baseData": {
-                      "ver": "2",
-                      "blobSasUri": `https://${saslocator.hostname}/${saslocator.container}/${encodeURIComponent(key)}?${saslocator.sas}`,
-                      "sourceName": "b50c523b-e5c3-4ef7-9390-4ba77ac81073",
-                      "sourceVersion": "1.0"
-                    }
-                  },
-                  "ver": 1,
-                  "name": "Microsoft.ApplicationInsights.OpenSchema",
-                  "time": new Date().toISOString(),
-                  "iKey": "808c7ad8-99b1-4737-91fe-0f63ca17a75a"
-                }),
-                putreq = https.request({
-                  hostname: 'dc.services.visualstudio.com',
-                  path: '/v2/track',
-                  method: 'POST',
-                  headers: {
-                    "Content-Length": payload.length
-                  }
-                }, (res) => {
-
-                  if(res.statusCode == 200 || res.statusCode == 201) {
-                    processing--; complete++
-                    fs.write(logerr, `success,${key},AppInsights,\n`, () => {
-                      accept(key) 
-                    })
-                  } else {
-                    processing--; error++
-                    fs.write(logerr, `error,${key},AppInsights,${res.statusCode}\n`, () => {
-                        reject(`failed code from AppInsights for ${key} - ${res.statusCode}`)
-                    })
-                  }
-                }).on('error', (e) => {
-                  fs.writeSync(logerr, `error,${key},AppInsights,${e}\n`, () => {
-                    reject(`failed to send to AppInsights key  ${key} - ${e}`)
-                  })
-                })
-            putreq.write (payload)
-            putreq.end()
+            sendToAppInsights(key).then((succkey) => {
+              processing--; complete++
+              fs.write(logerr, `success,${key},AppInsights,\n`, () => {
+                accept(key) 
+              })
+            }, (err) => {
+              processing--; error++
+              fs.write(logerr, `error,${key},${err}\n`, () => {
+                  reject(`Error: key ${key} - ${err}`)
+              })
+            })
           }
         })
         azblob.on('error', (e) => { 
@@ -83,32 +109,44 @@ let streamBlob = (s3blob, azblob, key) => {
     })
 }
 
-let skip = (process.env.SKIP_KEY != null),
-      si = setInterval (() => { console.log (`batches = ${batches} queued = ${queued}, processing = ${processing}, error = ${error}, complete = ${complete} rate = ${complete/((Math.round(new Date().getTime()/1000))-startsec)} files/s`)}, 2000)
+const saslocator = createSASLocator(process.env.STORAGEACC, process.env.CONTAINER, 3000, process.env.KEY)
 
-const s3auth = s3.createClient({s3Options: { accessKeyId: process.env.ACCESSKEYID, secretAccessKey: process.env.SECRETACCESSKEY}}),
-      saslocator = createSASLocator(process.env.STORAGEACC, process.env.CONTAINER, 3000, process.env.KEY),
-      plimit = new PromiseRunner(10)
+if (mode == 'all') {
 
-s3auth.listObjects({s3Params: {Bucket: process.env.BUCKET, Prefix: PREFIX}})
-  .addListener('data', (d) => {
-    batches++
-    for (let f of d.Contents) {
-      let key = f.Key
-      if (!skip) {
-        plimit.promiseFn(() => streamBlob ({Bucket: process.env.BUCKET, Key: key}, new AzBlobWritable(saslocator, key), key))
-        queued++
+  console.log (`transfering files from s3 to azure with prefix "${PREFIX}"...`)
+  let skip = (process.env.SKIP_KEY != null),
+        si = setInterval (() => { console.log (`batches = ${batches} queued = ${queued}, processing = ${processing}, error = ${error}, complete = ${complete} rate = ${complete/((Math.round(new Date().getTime()/1000))-startsec)} files/s`)}, 2000)
+
+  const s3auth = s3.createClient({s3Options: { accessKeyId: process.env.ACCESSKEYID, secretAccessKey: process.env.SECRETACCESSKEY}}),
+        plimit = new PromiseRunner(10)
+
+  s3auth.listObjects({s3Params: {Bucket: process.env.BUCKET, Prefix: PREFIX}})
+    .addListener('data', (d) => {
+      batches++
+      for (let f of d.Contents) {
+        let key = f.Key
+        if (!skip) {
+          plimit.promiseFn(() => streamBlob ({Bucket: process.env.BUCKET, Key: key}, new AzBlobWritable(saslocator, key), key))
+          queued++
+        }
+        if (skip == true && key == process.env.SKIP_KEY) { skip = false }
       }
-      if (skip == true && key == process.env.SKIP_KEY) { skip = false }
-    }
 
-  })
-  .addListener('end', () => {
-    plimit.done().then(() => {
-      clearInterval(si)
-      console.log (`batches = ${batches} queued = ${queued}, processing = ${processing}, error = ${error}, complete = ${complete}`)
-    }, (e) => {
-      clearInterval(si)
-      console.log (`**WITH ERRORS ** batches = ${batches} queued = ${queued}, processing = ${processing}, error = ${error}, complete = ${complete}`)
     })
-  })
+    .addListener('end', () => {
+      plimit.done().then(() => {
+        clearInterval(si)
+        console.log (`batches = ${batches} queued = ${queued}, processing = ${processing}, error = ${error}, complete = ${complete}`)
+      }, (e) => {
+        clearInterval(si)
+        console.log (`**WITH ERRORS ** batches = ${batches} queued = ${queued}, processing = ${processing}, error = ${error}, complete = ${complete}`)
+      })
+    })
+} else if (mode == 'ionly') {
+  console.log (`importing existing blob into App Insights "${PREFIX}"..`)
+   sendToAppInsights(PREFIX).then((succkey) => {
+      console.log (`success ${PREFIX}`) 
+      }, (err) => {
+      console.log (`error ${PREFIX} - ${err}`)
+    })
+}
