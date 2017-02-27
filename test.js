@@ -1,21 +1,24 @@
 
+const ChangeDelimiter = require('./lib/ChangeDelimiter')
+
 /* TEST s3 list */
-/*
+
 const      
   s3 = require('s3'),
   s3auth = s3.createClient({s3Options: { accessKeyId: process.env.ACCESSKEYID, secretAccessKey: process.env.SECRETACCESSKEY}})
 
-s3auth.listObjects({s3Params: {Bucket: process.argv[2], Prefix: process.argv[3]}})
+s3auth.listObjects({s3Params: {Bucket: process.env.BUCKET, Prefix: process.argv[2]}})
 .addListener('data', (d) => { 
     for (let f of d.Contents) {
       console.log(`${f.Size} -  ${f.Key}`)
+      s3auth.downloadStream({Bucket: process.env.BUCKET, Key: f.Key}).pipe(new ChangeDelimiter()).pipe(process.stdout)
     }
 })
-*/
+
 
 /* TEST Delimiter */
 /*
-const cd = require('./lib/ChangeDelimiter')
+
 fs.createReadStream(process.argv[2]).pipe(new require('./lib/ChangeDelimiter')()).pipe(process.stdout)
 */
 
