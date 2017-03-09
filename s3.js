@@ -2,12 +2,10 @@ const
   //csv = require("fast-csv")
   s3 = require('s3'),
   https = require('https'),
-  fs = require('fs'),
-  startsec =  Math.round(new Date().getTime()/1000),
-  logerr = fs.openSync(`log-${startsec}.csv`, 'a'),
   PromiseRunner = require('./lib/PromiseRunner'),
   { createSASLocator, AzBlobWritable } = require('./lib/AzBlobWritable'),
-  ChangeDelimiter = require('./lib/ChangeDelimiter')
+  ChangeDelimiter = require('./lib/ChangeDelimiter'),
+  AzListBlobs = require('./lib/AzListBlobs')
 
 if (!(process.env.ACCESSKEYID && process.env.SECRETACCESSKEY && process.env.BUCKET && process.env.STORAGEACC && process.env.CONTAINER && process.env.KEY)) {
     console.log ('set environment:\n\nexport ACCESSKEYID=""\nexport SECRETACCESSKEY=""\nexport BUCKET=""\nexport STORAGEACC=""\nexport CONTAINER=""\nexport KEY=""\n')
@@ -34,7 +32,7 @@ if (!PREFIX) {
     process.exit (1)
 }
 
-let batches = 0, queued = 0, processing = 0, error = 0, complete = 0
+let batches = 0, queued = 0, skipped =0, processing = 0, error = 0, complete = 0
 
 let sendToAppInsights = (key) => {
   return new Promise((accept, reject) => {
@@ -81,12 +79,11 @@ const saslocator = createSASLocator(process.env.STORAGEACC, process.env.CONTAINE
 
 if (mode == 'all') {
 
-  console.log (`transfering files from s3 to azure with prefix "${PREFIX}"...`)
-  let skip = (process.env.SKIP_KEY != null),
-        si = setInterval (() => { console.log (`batches = ${batches} queued = ${queued}, processing = ${processing}, error = ${error}, complete = ${complete} rate = ${complete/((Math.round(new Date().getTime()/1000))-startsec)} files/s`)}, 2000)
-
   const s3auth = s3.createClient({s3Options: { accessKeyId: process.env.ACCESSKEYID, secretAccessKey: process.env.SECRETACCESSKEY}}),
-        plimit = new PromiseRunner(10)
+        plimit = new PromiseRunner(10),
+        fs = require('fs'),
+        startsec =  Math.round(new Date().getTime()/1000),
+        logerr = fs.openSync(`log-${startsec}.csv`, 'a')
 
   
   let streamBlob = (s3blob, azblob, key) => {
@@ -121,26 +118,44 @@ if (mode == 'all') {
       })
   }
 
-  s3auth.listObjects({s3Params: {Bucket: process.env.BUCKET, Prefix: PREFIX}})
-    .addListener('data', (d) => {
-      batches++
-      for (let f of d.Contents) {
-        let key = f.Key
-        if (!skip) {
-          plimit.promiseFn(() => streamBlob ({Bucket: process.env.BUCKET, Key: key}, new AzBlobWritable(saslocator, key), key))
-          queued++
-        }
-        if (skip == true && key == process.env.SKIP_KEY) { skip = false }
-      }
+  let azBlobs = [], nameSet, skip = (process.env.SKIP_KEY != null)
+    
+  process.stdout.write(`Getting Azore blobs for ${PREFIX}: `)
+  AzListBlobs(saslocator, PREFIX, azBlobs). then ((succ) => {
 
-    })
-    .addListener('end', () => {
-      plimit.done().then(() => {
-        clearInterval(si)
-        console.log (`batches = ${batches} queued = ${queued}, processing = ${processing}, error = ${error}, complete = ${complete}`)
-      }, (e) => {
-        clearInterval(si)
-        console.log (`**WITH ERRORS ** batches = ${batches} queued = ${queued}, processing = ${processing}, error = ${error}, complete = ${complete}`)
+    process.stdout.write (` ${succ.length} Azure blobs\n`)
+    nameSet = new Set(succ)
+
+            
+    const mgfn = () => {console.log (`skipped = ${skipped} queued = ${queued}, processing = ${processing}, error = ${error}, complete = ${complete} rate = ${complete/((Math.round(new Date().getTime()/1000))-startsec)} files/s`) }
+    console.log (`transfering files from s3 to azure with prefix "${PREFIX}"...`)
+    let si = setInterval (mgfn, 4000)
+
+    s3auth.listObjects({s3Params: {Bucket: process.env.BUCKET, Prefix: PREFIX}})
+      .addListener('data', (d) => {
+        batches++
+        for (let f of d.Contents) {
+          let key = f.Key
+
+          if ((!skip) && (!nameSet.has(key))) {
+            plimit.promiseFn(() => streamBlob ({Bucket: process.env.BUCKET, Key: key}, new AzBlobWritable(saslocator, key), key))
+            queued++
+          } else {
+            skipped++
+          }
+          if (skip == true && key == process.env.SKIP_KEY) { skip = false }
+        }
+
+      })
+      .addListener('end', () => {
+        plimit.done().then(() => {
+          clearInterval(si)
+          mgfn()
+        }, (e) => {
+          clearInterval(si)
+          mgfn()
+          console.log ('** WITH ERRORS **')
+        })
       })
     })
 } else if (mode == 'ionly') {
