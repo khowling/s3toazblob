@@ -18,14 +18,16 @@ The Code performs the following, given the filepath prefix:
 
 Setup the following environemt variables
 
-```export ACCESSKEYID="<S3 Bucket ACCESS KEY>"
+```
+export ACCESSKEYID="<S3 Bucket ACCESS KEY>"
 export SECRETACCESSKEY="<S3 Bucket ACCESS KEY SECRET>"
 export BUCKET="<S3 Bucket>"
 export STORAGEACC="<Azure Blob Storage Account Name>"
 export CONTAINER="<Azure Blob Container Name>"
 export KEY="<Azure Blob Key>"
 
-export PREFIX="<S3 Prefix to filter the files>" # use <yyyy> <mm> <dd> to replace with current date values
+# use <yyyy> <mm> <dd> to replace with current date values
+export PREFIX="<S3 Prefix to filter the files>" 
 
 export APPINSIGHTS_IKEY="<Application Insights Key>"
 export APPINSIGHTS_SOURCENAME="<Application Insights Source>"
