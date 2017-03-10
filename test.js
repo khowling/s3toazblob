@@ -6,11 +6,20 @@ const AzListBlobs = require('./lib/AzListBlobs'),
       
 
 
-const PREFIX = process.argv[2]
+let prefix = process.argv[2] || process.env.PREFIX
+if (!prefix) {
+    console.log ('pass S3 Prefix on command line or set PREFIX env')
+    process.exit (1)
+} else {
+  let date2hrsago = new Date()
+  date2hrsago.setHours(date2hrsago.getHours() - 2)
+  prefix = prefix.replace ('<yyyy>', date2hrsago.getFullYear()).replace('<mm>',date2hrsago.getMonth()+1).replace('<dd>',date2hrsago.getDate())
+}
+
 let azBlobs = [], nameSet
 
-process.stdout.write(`Getting Azore blobs for ${PREFIX}: `)
-AzListBlobs(saslocator, PREFIX, azBlobs). then ((succ) => {
+process.stdout.write(`Getting Azore blobs for ${prefix}: `)
+AzListBlobs(saslocator, prefix, azBlobs). then ((succ) => {
   process.stdout.write (` ${succ.length} Azure blobs\n`)
   nameSet = new Set(succ)
 
@@ -19,8 +28,8 @@ AzListBlobs(saslocator, PREFIX, azBlobs). then ((succ) => {
     s3auth = s3.createClient({s3Options: { accessKeyId: process.env.ACCESSKEYID, secretAccessKey: process.env.SECRETACCESSKEY}})
 
   let found = 0, newb = 0
-  process.stdout.write(`Getting s3 blobs for ${PREFIX}: `)
-  s3auth.listObjects({s3Params: {Bucket: process.env.BUCKET, Prefix: PREFIX}})
+  process.stdout.write(`Getting s3 blobs for ${prefix}: `)
+  s3auth.listObjects({s3Params: {Bucket: process.env.BUCKET, Prefix: prefix}})
   .addListener('data', (d) => { 
       process.stdout.write('.')
       for (let f of d.Contents) {

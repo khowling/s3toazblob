@@ -2,6 +2,7 @@
   "name": "s3toazblob",
   "version": "0.0.0",
   "dependencies": {
+    "applicationinsights": "^0.19.0",
     "crypto": "0.0.3",
     "flushwritable": "^1.0.0",
     "s3": "^4.4.0"

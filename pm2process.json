@@ -1,0 +1,18 @@
+{
+    "script"    : "s3.js",
+    "cwd"       :  "/home/<home>/s3toazblob",
+    "args"      : "TTG_V2/<yyyy>/<mm>/<dd>/",
+    "instances" : 1,
+    "exec_mode" : "cluster",
+    "cron_restart": "0 * * * *",
+    "env": {
+        "ACCESSKEYID":"",
+        "SECRETACCESSKEY":"",
+        "BUCKET":"",
+        "STORAGEACC":"",
+        "CONTAINER":"",
+        "KEY":"",
+        "APPINSIGHTS_IKEY":"",
+        "APPINSIGHTS_SOURCENAME":""
+    }
+}
