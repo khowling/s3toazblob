@@ -1,5 +1,5 @@
 const 
-  ungzip = require('zlib').createGunzip(),
+  zlib = require('zlib'),
   s3 = require('s3'),
   https = require('https'),
   PromiseRunner = require('./lib/PromiseRunner'),
@@ -89,7 +89,7 @@ const saslocator = createSASLocator(process.env.STORAGEACC, process.env.CONTAINE
 if (mode == 'all') {
   
   const s3auth = s3.createClient({s3Options: { accessKeyId: process.env.ACCESSKEYID, secretAccessKey: process.env.SECRETACCESSKEY}}),
-        plimit = new PromiseRunner(10),
+        plimit = new PromiseRunner(5),
         fs = require('fs'),
         startsec =  Math.round(new Date().getTime()/1000),
         logerr = fs.openSync(`log-${startsec}.csv`, 'a')
@@ -100,7 +100,7 @@ if (mode == 'all') {
   let streamBlob = (s3blob, azblob, key) => {
       return new Promise((accept, reject) => {
           processing++
-          s3auth.downloadStream(s3blob).pipe(ungzip).pipe(new ChangeDelimiter()).pipe(azblob)
+          s3auth.downloadStream(s3blob).pipe(zlib.createGunzip()).pipe(new ChangeDelimiter()).pipe(azblob)
 
           azblob.on('finish', () => {
             aiclient.trackEvent("s3toblobcopy_finish", {path: key});
