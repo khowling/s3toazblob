@@ -1,5 +1,5 @@
 const 
-  //csv = require("fast-csv")
+  ungzip = require('zlib').createGunzip(),
   s3 = require('s3'),
   https = require('https'),
   PromiseRunner = require('./lib/PromiseRunner'),
@@ -7,14 +7,6 @@ const
   ChangeDelimiter = require('./lib/ChangeDelimiter'),
   AzListBlobs = require('./lib/AzListBlobs'),
   appInsights = require('applicationinsights')
-
-
-
-
-if (!(process.env.ACCESSKEYID && process.env.SECRETACCESSKEY && process.env.BUCKET && process.env.STORAGEACC && process.env.CONTAINER && process.env.KEY && process.env.APPINSIGHTS_IKEY && process.env.APPINSIGHTS_SOURCENAME)) {
-    console.log ('set environment:\n\nexport ACCESSKEYID=""\nexport SECRETACCESSKEY=""\nexport BUCKET=""\nexport STORAGEACC=""\nexport CONTAINER=""\nexport KEY=""\nexport APPINSIGHTS_IKEY=""\nexport KEY=""\nexport APPINSIGHTS_SOURCENAME=""\nexport KEY=""\n')
-    process.exit (1)
-}
 
 
 let args = process.argv.slice(2),
@@ -29,6 +21,11 @@ if (args[0] && args[0].startsWith('-')) {
       process.exit (1)
   }
   args.shift()
+}
+
+if (!(process.env.APPINSIGHTS_IKEY && process.env.APPINSIGHTS_SOURCENAME) || (mode == 'all' && !(process.env.ACCESSKEYID && process.env.SECRETACCESSKEY && process.env.BUCKET && process.env.STORAGEACC && process.env.CONTAINER && process.env.KEY))) {
+    console.log ('set environment:\n\nexport ACCESSKEYID=""\nexport SECRETACCESSKEY=""\nexport BUCKET=""\nexport STORAGEACC=""\nexport CONTAINER=""\nexport KEY=""\nexport APPINSIGHTS_IKEY=""\nexport KEY=""\nexport APPINSIGHTS_SOURCENAME=""\nexport KEY=""\n')
+    process.exit (1)
 }
 
 let prefix = args[0] || process.env.PREFIX
@@ -69,12 +66,15 @@ let sendToAppInsights = (key) => {
           "Content-Length": payload.length
         }
       }, (res) => {
-
-        if(res.statusCode == 200 || res.statusCode == 201) {
+        let data = '';
+        res.on('data',  (chunk) => { data+= chunk })
+        res.on('end', () => {
+            if(res.statusCode == 200 || res.statusCode == 201) {
             accept(key) 
-        } else {
-            reject(`AppInsights ReturnCode,${res.statusCode}`)
-        }
+          } else {
+            reject(`AppInsights ReturnCode,${res.statusCode} ${data}`)
+          }
+        })
       }).on('error', (e) => {
         reject(`AppInsights Error,${e}`)
       })
@@ -100,7 +100,7 @@ if (mode == 'all') {
   let streamBlob = (s3blob, azblob, key) => {
       return new Promise((accept, reject) => {
           processing++
-          s3auth.downloadStream(s3blob).pipe(new ChangeDelimiter()).pipe(azblob)
+          s3auth.downloadStream(s3blob).pipe(ungzip).pipe(new ChangeDelimiter()).pipe(azblob)
 
           azblob.on('finish', () => {
             aiclient.trackEvent("s3toblobcopy_finish", {path: key});
@@ -156,10 +156,11 @@ if (mode == 'all') {
       .addListener('data', (d) => {
         batches++
         for (let f of d.Contents) {
-          let key = f.Key
+          let key = f.Key,
+              keyrmgz = key.replace(/\.[^.]+$/,'')
 
-          if ((!skip) && (!nameSet.has(key))) {
-            plimit.promiseFn(() => streamBlob ({Bucket: process.env.BUCKET, Key: key}, new AzBlobWritable(saslocator, key), key))
+          if ((!skip) && (!nameSet.has(key) && !nameSet.has(keyrmgz))) {
+            plimit.promiseFn(() => streamBlob ({Bucket: process.env.BUCKET, Key: key}, new AzBlobWritable(saslocator, keyrmgz), keyrmgz))
             queued++
           } else {
             skipped++
